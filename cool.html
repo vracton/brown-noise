@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Charged Particle Bands</title>
+	<style>
+		:root {
+			color-scheme: dark light;
+		}
+
+		* {
+			box-sizing: border-box;
+		}
+
+		body {
+			margin: 0;
+			background: radial-gradient(circle at center, #111 0%, #050505 100%);
+			overflow: hidden;
+			font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+		}
+
+		canvas {
+			display: block;
+			width: 100vw;
+			height: 100vh;
+		}
+
+		.overlay {
+			position: fixed;
+			inset: 0;
+			pointer-events: none;
+			display: flex;
+			align-items: flex-end;
+			justify-content: flex-start;
+			padding: 1rem 1.5rem;
+			color: rgba(255, 255, 255, 0.7);
+			font-size: clamp(0.8rem, 2vw, 1rem);
+			text-transform: uppercase;
+			letter-spacing: 0.2em;
+		}
+	</style>
+</head>
+<body>
+	<canvas id="field"></canvas>
+	<div class="overlay">Move the mouse to repel the particles</div>
+
+	<script>
+		const canvas = document.getElementById('field');
+		const ctx = canvas.getContext('2d');
+
+		const particleRadius = 6.7;
+		const particleCountPerBand = 2500;
+		const bandThickness = 0.33;
+		const bands = [
+			{ color: '#0000ff', center: bandThickness / 2 }, //color: '#6c4f31'
+			{ color: '#00ff00', center: bandThickness * 3 / 2 }, //color: '#68401c'
+			{ color: '#ff0000', center: bandThickness * 5 / 2 } //color: '#61370c'
+		];
+		const collisionCellSize = particleRadius * 6;
+		const restitution = 1;
+		const homeSpring = 0.012;
+
+		const particles = [];
+		const mouse = { x: 0, y: 0, active: false };
+
+		function resizeCanvas() {
+			const { innerWidth, innerHeight } = window;
+			const dpr = window.devicePixelRatio || 1;
+			canvas.width = innerWidth * dpr;
+			canvas.height = innerHeight * dpr;
+			canvas.style.width = `${innerWidth}px`;
+			canvas.style.height = `${innerHeight}px`;
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		}
+
+		function createParticles() {
+			particles.length = 0;
+			const width = window.innerWidth;
+			const height = window.innerHeight;
+
+			bands.forEach(({ color, center }) => {
+				for (let i = 0; i < particleCountPerBand; i++) {
+					const x = Math.random() * width;
+					const offset = (Math.random() - 0.5) * bandThickness;
+					const y = height * Math.max(0.02, Math.min(0.98, center + offset));
+					particles.push({
+						x,
+						y,
+						homeY: y,
+						vx: (Math.random() - 0.5) * 0.35,
+						vy: (Math.random() - 0.5) * 0.35,
+						color
+					});
+				}
+			});
+		}
+
+		function resolveCollisions() {
+			//spatial hash keeps collision checks speedy even with many particles
+			const grid = new Map();
+			const minDist = particleRadius * 2;
+			const minDistSq = minDist * minDist;
+
+			for (let i = 0; i < particles.length; i++) {
+				const particle = particles[i];
+				const cellX = Math.floor(particle.x / collisionCellSize);
+				const cellY = Math.floor(particle.y / collisionCellSize);
+				const key = `${cellX}:${cellY}`;
+				if (!grid.has(key)) {
+					grid.set(key, []);
+				}
+				grid.get(key).push(i);
+			}
+
+			for (let i = 0; i < particles.length; i++) {
+				const particle = particles[i];
+				const cellX = Math.floor(particle.x / collisionCellSize);
+				const cellY = Math.floor(particle.y / collisionCellSize);
+
+				for (let gx = -1; gx <= 1; gx++) {
+					for (let gy = -1; gy <= 1; gy++) {
+						const key = `${cellX + gx}:${cellY + gy}`;
+						const bucket = grid.get(key);
+						if (!bucket) continue;
+
+						for (const j of bucket) {
+							if (j <= i) continue;
+							const other = particles[j];
+							const dx = other.x - particle.x;
+							const dy = other.y - particle.y;
+							const distSq = dx * dx + dy * dy;
+
+							if (distSq >= minDistSq || distSq === 0) continue;
+
+							const dist = Math.sqrt(distSq);
+							const overlap = (minDist - dist) * 0.5;
+							const nx = dx / dist;
+							const ny = dy / dist;
+
+							particle.x -= nx * overlap;
+							particle.y -= ny * overlap;
+							other.x += nx * overlap;
+							other.y += ny * overlap;
+
+							const relativeVx = particle.vx - other.vx;
+							const relativeVy = particle.vy - other.vy;
+							const sepVel = relativeVx * nx + relativeVy * ny;
+
+							if (sepVel > 0) continue;
+
+							const impulse = (-(1 + restitution) * sepVel) / 2;
+							particle.vx += nx * impulse;
+							particle.vy += ny * impulse;
+							other.vx -= nx * impulse;
+							other.vy -= ny * impulse;
+						}
+					}
+				}
+			}
+		}
+
+		function updateParticles() {
+			const width = window.innerWidth;
+			const height = window.innerHeight;
+			const repelStrength = 140;
+			const damping = 0.998;
+
+			for (const particle of particles) {
+				if (mouse.active) {
+					const dx = particle.x - mouse.x;
+					const dy = particle.y - mouse.y;
+					const distSq = dx * dx + dy * dy;
+					if (distSq > 10) {
+						const force = repelStrength / distSq;
+						const dist = Math.sqrt(distSq);
+						particle.vx += (dx / dist) * force;
+						particle.vy += (dy / dist) * force;
+					}
+				}
+
+				particle.vy += (particle.homeY - particle.y) * homeSpring;
+				particle.x += particle.vx;
+				particle.y += particle.vy;
+			}
+
+			resolveCollisions();
+
+			for (const particle of particles) {
+				if (particle.x <= particleRadius) {
+					particle.x = particleRadius;
+					particle.vx *= -1;
+				} else if (particle.x >= width - particleRadius) {
+					particle.x = width - particleRadius;
+					particle.vx *= -1;
+				}
+
+				if (particle.y <= particleRadius) {
+					particle.y = particleRadius;
+					particle.vy *= -1;
+				} else if (particle.y >= height - particleRadius) {
+					particle.y = height - particleRadius;
+					particle.vy *= -1;
+				}
+
+				particle.vx *= damping;
+				particle.vy *= damping;
+			}
+		}
+
+		function renderParticles() {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			ctx.save();
+			ctx.globalCompositeOperation = 'lighter'; //'darker' acts normally
+
+			for (const particle of particles) {
+				ctx.fillStyle = particle.color;
+				ctx.beginPath();
+				ctx.arc(particle.x, particle.y, particleRadius, 0, Math.PI * 2);
+				ctx.fill();
+			}
+
+			ctx.restore();
+		}
+
+		function animate() {
+			updateParticles();
+			renderParticles();
+			requestAnimationFrame(animate);
+		}
+
+		function handlePointer(event) {
+			const rect = canvas.getBoundingClientRect();
+			mouse.x = event.clientX - rect.left;
+			mouse.y = event.clientY - rect.top;
+			mouse.active = true;
+		}
+
+		function handlePointerLeave() {
+			mouse.active = false;
+		}
+
+		window.addEventListener('resize', () => {
+			resizeCanvas();
+		});
+
+		canvas.addEventListener('pointermove', handlePointer);
+		canvas.addEventListener('pointerdown', handlePointer);
+		canvas.addEventListener('pointerup', handlePointer);
+		canvas.addEventListener('pointerleave', handlePointerLeave);
+
+		resizeCanvas();
+		createParticles();
+		animate();
+	</script>
+</body>
+</html>

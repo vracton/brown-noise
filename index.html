@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Charged Particle Bands</title>
+	<style>
+		@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+		* {
+			box-sizing: border-box;
+		}
+
+		body {
+			margin: 0;
+			background: linear-gradient(to bottom, #775433 0% 33.333%, #673f1a 33.333% 66.666%, #592f04 66.666% 100%);
+			overflow: hidden;
+			cursor: none;
+		}
+
+		canvas {
+			display: block;
+			width: 100vw;
+			height: 100vh;
+		}
+
+		#time {
+			position: fixed;
+			left: 50%;
+			top: 16px;
+			padding: 16px;
+			background-color: rgba(119, 84, 51, 0.2);
+			backdrop-filter: blur(4px);
+			border-radius: 24px;
+			font-size: 3em;
+			text-align: center;
+			color: #eff7ff;
+			transform: translate(-50%, 0);
+			font-family: "Inter", sans-serif;
+			font-weight: 900;
+			pointer-events: none;
+			transition: opacity 0.5s;
+			opacity: 0;
+		}
+
+		#status {
+			position: fixed;
+			right: 16px;
+			bottom: 16px;
+			width: 40px;
+			height: 40px;
+			background-color: rgba(89, 47, 4, 0.2);
+			backdrop-filter: blur(4px);
+			border-radius: 16px;
+			font-size: 3em;
+			text-align: center;
+			color: #eff7ff;
+			font-family: "Inter", sans-serif;
+			font-weight: 900;
+			pointer-events: none
+		}
+	</style>
+
+	<audio preload loop id="audio" src="brownnoise.mp3"></audio>
+	<!--audo courtesy of crysknife007 - https://cheesynirvosa.bandcamp.com/track/deep-layered-brown-noise -->
+</head>
+<body>
+	<canvas id="dots"></canvas>
+	
+	<div id="time">00:0.00</div>
+	<canvas id="status">p</canvas>
+
+	<script>
+		const canvas = document.getElementById('dots');
+		const ctx = canvas.getContext('2d');
+
+		const particleRadius = window.innerWidth * 6.6/1500 + 0.1;
+		const particleCountPerBand = Math.ceil((2750*6.7)/1102000*window.innerHeight*window.innerWidth/particleRadius);
+		const bandThickness = 0.33;
+		// alert(window.innerHeight + " "+window.innerWidth);
+		const bands = [
+			{ color: '#775433', center: bandThickness / 2 },
+			{ color: '#673f1a', center: (bandThickness * 3) / 2 },
+			{ color: '#592f04', center: (bandThickness * 5) / 2 }
+		];
+		const collisionCellSize = particleRadius * 6;
+		const neighborRadius = particleRadius * 12;
+		const neighborRadiusSq = neighborRadius * neighborRadius;
+		const softRepulsion = 0.02;
+
+		const particles = [];
+		const mouse = { x: 0, y: 0, active: false };
+
+		function resizeCanvas() {
+			const { innerWidth, innerHeight } = window;
+			const dpr = window.devicePixelRatio || 1;
+			canvas.width = innerWidth * dpr;
+			canvas.height = innerHeight * dpr;
+			canvas.style.width = `${innerWidth}px`;
+			canvas.style.height = `${innerHeight}px`;
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		}
+
+		function createParticles() {
+			particles.length = 0;
+			const width = window.innerWidth;
+			const height = window.innerHeight;
+
+			bands.forEach(({ color, center }) => {
+				for (let i = 0; i < particleCountPerBand; i++) {
+					const x = Math.random() * width;
+					const offset = (Math.random() - 0.5) * bandThickness;
+					const y = height * Math.max(0.02, Math.min(0.98, center + offset));
+					particles.push({
+						x,
+						y,
+						vx: (Math.random() - 0.5) * 0.25,
+						vy: (Math.random() - 0.5) * 0.25,
+						color
+					});
+				}
+			});
+		}
+
+		function resolveCollisions() {
+			//spatial hash keeps collision checks speedy even with many particles
+			const grid = new Map();
+			const minDist = particleRadius * 2;
+			const minDistSq = minDist * minDist;
+
+			for (let i = 0; i < particles.length; i++) {
+				const particle = particles[i];
+				const cellX = Math.floor(particle.x / collisionCellSize);
+				const cellY = Math.floor(particle.y / collisionCellSize);
+				const key = `${cellX}:${cellY}`;
+				if (!grid.has(key)) {
+					grid.set(key, []);
+				}
+				grid.get(key).push(i);
+			}
+
+			for (let i = 0; i < particles.length; i++) {
+				const particle = particles[i];
+				const cellX = Math.floor(particle.x / collisionCellSize);
+				const cellY = Math.floor(particle.y / collisionCellSize);
+
+				for (let gx = -1; gx <= 1; gx++) {
+					for (let gy = -1; gy <= 1; gy++) {
+						const key = `${cellX + gx}:${cellY + gy}`;
+						const bucket = grid.get(key);
+						if (!bucket) continue;
+
+						for (const j of bucket) {
+							if (j <= i) continue;
+							const other = particles[j];
+							const dx = other.x - particle.x;
+							const dy = other.y - particle.y;
+							const distSq = dx * dx + dy * dy;
+
+							if (distSq === 0 || distSq > neighborRadiusSq) continue;
+
+							const dist = Math.sqrt(distSq);
+							const nx = dx / dist;
+							const ny = dy / dist;
+
+							const softFactor = (neighborRadius - dist) / neighborRadius;
+							const push = softRepulsion * softFactor;
+							particle.vx -= nx * push;
+							particle.vy -= ny * push;
+							other.vx += nx * push;
+							other.vy += ny * push;
+
+							if (dist >= minDist) continue;
+
+							const overlap = (minDist - dist) * 0.5;
+							particle.x -= nx * overlap;
+							particle.y -= ny * overlap;
+							other.x += nx * overlap;
+							other.y += ny * overlap;
+
+							const relativeVx = other.vx - particle.vx;
+							const relativeVy = other.vy - particle.vy;
+							const sepVel = relativeVx * nx + relativeVy * ny;
+
+							if (sepVel > 0) continue;
+
+							const impulse = sepVel * -0.9;
+							particle.vx -= nx * impulse;
+							particle.vy -= ny * impulse;
+							other.vx += nx * impulse;
+							other.vy += ny * impulse;
+						}
+					}
+				}
+			}
+		}
+
+		function updateParticles() {
+			const width = window.innerWidth;
+			const height = window.innerHeight;
+			const repelStrength = 500;
+			const damping = 0.75;
+
+			for (const particle of particles) {
+				if (mouse.active) {
+					const dx = particle.x - mouse.x;
+					const dy = particle.y - mouse.y;
+					const distSq = dx * dx + dy * dy;
+					if (distSq > 10) {
+						const force = repelStrength / distSq;
+						const dist = Math.sqrt(distSq);
+						particle.vx += (dx / dist) * force;
+						particle.vy += (dy / dist) * force;
+					}
+				}
+
+				particle.x += particle.vx;
+				particle.y += particle.vy;
+			}
+
+			resolveCollisions();
+
+			for (const particle of particles) {
+				if (particle.x <= particleRadius) {
+					particle.x = particleRadius;
+					particle.vx *= -0.9;
+				} else if (particle.x >= width - particleRadius) {
+					particle.x = width - particleRadius;
+					particle.vx *= -0.9;
+				}
+
+				if (particle.y <= particleRadius) {
+					particle.y = particleRadius;
+					particle.vy *= -0.9;
+				} else if (particle.y >= height - particleRadius) {
+					particle.y = height - particleRadius;
+					particle.vy *= -0.9;
+				}
+
+				particle.vx *= damping;
+				particle.vy *= damping;
+			}
+		}
+
+		function renderParticles() {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			ctx.save();
+			ctx.globalCompositeOperation = 'screen'; //'darker' acts normally
+
+			for (const particle of particles) {
+				ctx.fillStyle = particle.color;
+				ctx.beginPath();
+				ctx.arc(particle.x, particle.y, particleRadius, 0, Math.PI * 2);
+				ctx.fill();
+			}
+
+			ctx.restore();
+		}
+
+		function animate() {
+			updateParticles();
+			renderParticles();
+			requestAnimationFrame(animate);
+		}
+
+		function handlePointer(event) {
+			const rect = canvas.getBoundingClientRect();
+			mouse.x = event.clientX - rect.left;
+			mouse.y = event.clientY - rect.top;
+
+			if (mouse.y < 150) {
+				document.getElementById('time').style.opacity = 1;
+			} else {
+				document.getElementById('time').style.opacity = 0;
+			}
+
+			mouse.active = true;
+		}
+
+		function handlePointerLeave() {
+			mouse.active = false;
+		}
+
+		const audio = document.getElementById('audio');
+		const audioCtx = new AudioContext();
+		const track = audioCtx.createMediaElementSource(audio);
+		const gainNode = audioCtx.createGain();
+		track.connect(gainNode).connect(audioCtx.destination);
+		let fadeInterval;
+		audio.pause();
+		gainNode.gain.value = 0;
+
+		function handlePointerClick(event) {
+			if (fadeInterval) clearInterval(fadeInterval);
+			if (audio.paused) {
+				audio.play();
+				fadeInterval = setInterval(() => {
+					if (gainNode.gain.value < 1.0) {
+						gainNode.gain.value = Math.min(1.0, gainNode.gain.value + 0.02);
+					} else {
+						clearInterval(fadeInterval);
+					}
+				}, 25);
+			} else {
+				fadeInterval = setInterval(() => {
+					if (gainNode.gain.value > 0.0) {
+						gainNode.gain.value = Math.max(0.0, gainNode.gain.value - 0.02);
+					} else {
+						clearInterval(fadeInterval);
+						audio.pause();
+					}
+				}, 20);
+			}
+		}
+
+		window.addEventListener('resize', () => {
+			resizeCanvas();
+		});
+
+		canvas.addEventListener('pointermove', handlePointer);
+		canvas.addEventListener('pointerup', handlePointer);
+		canvas.addEventListener('pointerleave', handlePointerLeave);
+		canvas.addEventListener('pointerdown', handlePointerClick);
+
+		resizeCanvas();
+		createParticles();
+		animate();
+	</script>
+</body>
+</html>
