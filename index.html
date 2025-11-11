@@ -291,7 +291,11 @@
 		gainNode.gain.value = 0;
 
 		function handlePointerClick(event) {
+			if (audioCtx.state === 'suspended') {
+				audioCtx.resume();
+			}
 			if (fadeInterval) clearInterval(fadeInterval);
+			
 			if (audio.paused) {
 				audio.play();
 				fadeInterval = setInterval(() => {
