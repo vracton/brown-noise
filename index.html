@@ -6,6 +6,7 @@
 	<title>Charged Particle Bands</title>
 	<style>
 		@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+		@import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:ital,wght@0,100..900;1,100..900&display=swap');
 
 		* {
 			box-sizing: border-box;
@@ -32,7 +33,6 @@
 			background-color: rgba(119, 84, 51, 0.2);
 			backdrop-filter: blur(4px);
 			border-radius: 32px;
-			corner-shape: squircle;
 			font-size: 3em;
 			text-align: center;
 			color: #eff7ff;
@@ -42,6 +42,17 @@
 			pointer-events: none;
 			transition: opacity 0.5s;
 			opacity: 0;
+		}
+
+		#time .time-main {
+			font-variant-numeric: tabular-nums;
+		}
+
+		#time .time-ms {
+			display: inline-block;
+			font-family: "Azeret Mono", monospace;
+			font-variant-numeric: tabular-nums;
+			font-size: 0.75em;
 		}
 
 		#status {
@@ -69,12 +80,13 @@
 <body>
 	<canvas id="dots"></canvas>
 	
-	<div id="time">00:0.00</div>
+	<div id="time"><span class="time-main">0</span><span class="time-ms">.00</span></div>
 	<canvas id="status">p</canvas>
 
 	<script>
 		const canvas = document.getElementById('dots');
 		const ctx = canvas.getContext('2d');
+		const timeElement = document.getElementById('time');
 
 		const particleRadius = window.innerWidth * 6.6/1500 + 0.1;
 		const particleCountPerBand = Math.ceil((2750*6.7)/1102000*window.innerHeight*window.innerWidth/particleRadius);
@@ -92,6 +104,34 @@
 
 		const particles = [];
 		const mouse = { x: 0, y: 0, active: false };
+		const STORAGE_KEY = 'brownnoise-accumulated-time-ms';
+		let playbackAnchor = null;
+		let accumulatedTime = 0;
+		let audioPlaying = false;
+		let lastDisplayValue = '';
+
+		(function restoreAccumulatedTime() {
+			try {
+				const stored = localStorage.getItem(STORAGE_KEY);
+				if (stored !== null) {
+					const parsed = Number(stored);
+					if (Number.isFinite(parsed) && parsed >= 0) {
+						accumulatedTime = parsed;
+					}
+				}
+			} catch (error) {
+				console.error('Unable to restore playback time from storage', error);
+			}
+		})();
+
+		function persistAccumulatedTime() {
+			try {
+				const total = Math.floor(getElapsedMilliseconds());
+				localStorage.setItem(STORAGE_KEY, String(total));
+			} catch (error) {
+				console.error('Unable to persist playback time', error);
+			}
+		}
 
 		function resizeCanvas() {
 			const { innerWidth, innerHeight } = window;
@@ -259,9 +299,51 @@
 			ctx.restore();
 		}
 
+		function getElapsedMilliseconds() {
+			if (audioPlaying && playbackAnchor !== null) {
+				return accumulatedTime + (performance.now() - playbackAnchor);
+			}
+			return accumulatedTime;
+		}
+
+		function formatElapsedTime(totalMs) {
+			const ms = Math.max(0, totalMs);
+			const totalSeconds = Math.floor(ms / 1000);
+			const hundredths = Math.floor((ms % 1000) / 10);
+			const seconds = totalSeconds % 60;
+			const totalMinutes = Math.floor(totalSeconds / 60);
+			const minutes = totalMinutes % 60;
+			const totalHours = Math.floor(totalMinutes / 60);
+			const hours = totalHours % 24;
+			const days = Math.floor(totalHours / 24);
+			const pad = (value) => value.toString().padStart(2, '0');
+			const fraction = pad(hundredths);
+
+			if (days > 0) {
+				return { main: `${pad(days)}:${pad(hours)}:${pad(minutes)}:${pad(seconds)}`, fraction };
+			}
+			if (totalHours > 0) {
+				return { main: `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`, fraction };
+			}
+			if (totalMinutes > 0) {
+				return { main: `${pad(minutes)}:${pad(seconds)}`, fraction };
+			}
+			return { main: `${totalSeconds}`, fraction };
+		}
+
+		function updateTimeDisplay() {
+			const { main, fraction } = formatElapsedTime(getElapsedMilliseconds());
+			const composite = `${main}.${fraction}`;
+			if (composite !== lastDisplayValue) {
+				timeElement.innerHTML = `<span class="time-main">${main}.</span><span class="time-ms">${fraction}</span>`;
+				lastDisplayValue = composite;
+			}
+		}
+
 		function animate() {
 			updateParticles();
 			renderParticles();
+			updateTimeDisplay();
 			requestAnimationFrame(animate);
 		}
 
@@ -291,6 +373,20 @@
 		let fadeInterval;
 		audio.pause();
 		gainNode.gain.value = 0;
+
+		audio.addEventListener('play', () => {
+			playbackAnchor = performance.now();
+			audioPlaying = true;
+		});
+
+		audio.addEventListener('pause', () => {
+			if (audioPlaying && playbackAnchor !== null) {
+				accumulatedTime += performance.now() - playbackAnchor;
+			}
+			audioPlaying = false;
+			playbackAnchor = null;
+			persistAccumulatedTime();
+		});
 
 		function handlePointerClick(event) {
 			if (audioCtx.state === 'suspended') {
@@ -327,9 +423,16 @@
 		canvas.addEventListener('pointerup', handlePointer);
 		canvas.addEventListener('pointerleave', handlePointerLeave);
 		canvas.addEventListener('pointerdown', handlePointerClick);
+		window.addEventListener('beforeunload', persistAccumulatedTime);
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'hidden') {
+				persistAccumulatedTime();
+			}
+		});
 
 		resizeCanvas();
 		createParticles();
+		updateTimeDisplay();
 		animate();
 	</script>
 </body>
