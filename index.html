@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Charged Particle Bands</title>
+	<title>noise</title>
 	<style>
 		@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 		@import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:ital,wght@0,100..900;1,100..900&display=swap');
@@ -109,6 +109,7 @@
 		let accumulatedTime = 0;
 		let audioPlaying = false;
 		let lastDisplayValue = '';
+		let hasUserActivatedAudio = false;
 
 		(function restoreAccumulatedTime() {
 			try {
@@ -388,7 +389,7 @@
 			persistAccumulatedTime();
 		});
 
-		function handlePointerClick(event) {
+		function toggleAudio() {
 			if (audioCtx.state === 'suspended') {
 				audioCtx.resume();
 			}
@@ -415,6 +416,18 @@
 			}
 		}
 
+		function handlePointerClick(event) {
+			hasUserActivatedAudio = true;
+			toggleAudio();
+		}
+
+		function handleSpaceToggle(event) {
+			if (event.code !== 'Space' || event.repeat) return;
+			if (!hasUserActivatedAudio) return;
+			event.preventDefault();
+			toggleAudio();
+		}
+
 		window.addEventListener('resize', () => {
 			resizeCanvas();
 		});
@@ -423,6 +436,7 @@
 		canvas.addEventListener('pointerup', handlePointer);
 		canvas.addEventListener('pointerleave', handlePointerLeave);
 		canvas.addEventListener('pointerdown', handlePointerClick);
+		window.addEventListener('keydown', handleSpaceToggle);
 		window.addEventListener('beforeunload', persistAccumulatedTime);
 		document.addEventListener('visibilitychange', () => {
 			if (document.visibilityState === 'hidden') {
