@@ -81,12 +81,14 @@
 	<canvas id="dots"></canvas>
 	
 	<div id="time"><span class="time-main">0</span><span class="time-ms">.00</span></div>
-	<canvas id="status">p</canvas>
+	<canvas id="status"></canvas>
 
 	<script>
 		const canvas = document.getElementById('dots');
 		const ctx = canvas.getContext('2d');
 		const timeElement = document.getElementById('time');
+		const statusCanvas = document.getElementById('status');
+		const statusCtx = statusCanvas.getContext('2d');
 
 		const particleRadius = window.innerWidth * 6.6/1500 + 0.1;
 		const particleCountPerBand = Math.ceil((2750*6.7)/1102000*window.innerHeight*window.innerWidth/particleRadius);
@@ -110,6 +112,8 @@
 		let audioPlaying = false;
 		let lastDisplayValue = '';
 		let hasUserActivatedAudio = false;
+		let statusSquiggleAmount = 0;
+		let statusPhase = 0;
 
 		(function restoreAccumulatedTime() {
 			try {
@@ -142,6 +146,14 @@
 			canvas.style.width = `${innerWidth}px`;
 			canvas.style.height = `${innerHeight}px`;
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		}
+
+		function resizeStatusCanvas() {
+			const rect = statusCanvas.getBoundingClientRect();
+			const dpr = window.devicePixelRatio || 1;
+			statusCanvas.width = rect.width * dpr;
+			statusCanvas.height = rect.height * dpr;
+			statusCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		}
 
 		function createParticles() {
@@ -341,12 +353,57 @@
 			}
 		}
 
+		function renderStatusIndicator(deltaMs) {
+			const rect = statusCanvas.getBoundingClientRect();
+			const size = Math.min(rect.width, rect.height);
+			const center = size / 2;
+			const baseRadius = center - 6;
+			const targetSquiggle = audioPlaying ? 1 : 0;
+			const easing = audioPlaying ? 0.08 : 0.12;
+
+			statusSquiggleAmount += (targetSquiggle - statusSquiggleAmount) * easing;
+			statusPhase += deltaMs * 0.004;
+
+			statusCtx.clearRect(0, 0, rect.width, rect.height);
+			statusCtx.save();
+			statusCtx.translate(center, center);
+			statusCtx.strokeStyle = '#b9c7ff';
+			statusCtx.lineWidth = 3;
+			statusCtx.shadowColor = 'rgba(185, 199, 255, 0.5)';
+			statusCtx.shadowBlur = 6;
+
+			const points = 96;
+			const amplitude = 4.5 * statusSquiggleAmount;
+			const frequency = 6;
+			statusCtx.beginPath();
+			for (let i = 0; i <= points; i++) {
+				const angle = (i / points) * Math.PI * 2;
+				const wobble = amplitude * Math.sin(angle * frequency + statusPhase);
+				const radius = baseRadius + wobble;
+				const x = Math.cos(angle) * radius;
+				const y = Math.sin(angle) * radius;
+				if (i === 0) {
+					statusCtx.moveTo(x, y);
+				} else {
+					statusCtx.lineTo(x, y);
+				}
+			}
+			statusCtx.closePath();
+			statusCtx.stroke();
+			statusCtx.restore();
+		}
+
 		function animate() {
+			const now = performance.now();
+			const delta = animate.lastTime ? now - animate.lastTime : 16;
+			animate.lastTime = now;
 			updateParticles();
 			renderParticles();
 			updateTimeDisplay();
+			renderStatusIndicator(delta);
 			requestAnimationFrame(animate);
 		}
+		animate.lastTime = 0;
 
 		function handlePointer(event) {
 			const rect = canvas.getBoundingClientRect();
@@ -430,6 +487,7 @@
 
 		window.addEventListener('resize', () => {
 			resizeCanvas();
+			resizeStatusCanvas();
 		});
 
 		canvas.addEventListener('pointermove', handlePointer);
@@ -445,6 +503,7 @@
 		});
 
 		resizeCanvas();
+		resizeStatusCanvas();
 		createParticles();
 		updateTimeDisplay();
 		animate();
